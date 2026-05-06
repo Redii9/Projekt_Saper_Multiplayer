@@ -1,4 +1,6 @@
 import tkinter as tk
+import random
+from tkinter import messagebox
 
 
 class MinesweeperGame:
@@ -6,6 +8,12 @@ class MinesweeperGame:
         self.root = root
         self.network = network
         self.size = 10
+        self.num_mines = 12
+
+        self.mines = set()
+        self.flags = set()
+        self.revealed = set()
+        self.game_over = False
 
         # Przechowywanie przycisków
         self.my_buttons = []
@@ -13,6 +21,13 @@ class MinesweeperGame:
 
         self.root.title("Saper Duel")
         self.setup_ui()
+        self.generate_mines()
+
+    def generate_mines(self):
+        while len(self.mines) < self.num_mines:
+            r = random.randint(0, self.size - 1)
+            c = random.randint(0, self.size - 1)
+            self.mines.add((r, c))
 
     def setup_ui(self):
         # Kontener na obie plansze
@@ -36,6 +51,7 @@ class MinesweeperGame:
                 if is_interactive:
                     btn = tk.Button(frame, width=2, height=1, font=("Arial", 12, "bold"),
                                     command=lambda r=r, c=c: self.handle_my_click(r, c))
+                    btn.bind("<Button-3>", lambda event, r=r, c=c: self.handle_right_click(event, r, c))
                 else:
                     btn = tk.Button(frame, width=2, height=1, font=("Arial", 12, "bold"),
                                     state=tk.DISABLED, disabledforeground="black")
@@ -44,18 +60,110 @@ class MinesweeperGame:
                 row.append(btn)
             button_list.append(row)
 
+    def count_mines_around(self, r, c):
+        count = 0
+        for dr in [-1, 0, 1]:
+            for dc in [-1, 0, 1]:
+                if 0 <= r + dr < self.size and 0 <= c + dc < self.size:
+                    if (r + dr, c + dc) in self.mines:
+                        count += 1
+        return count
+
+    def handle_right_click(self, event, r, c):
+        if self.game_over or (r, c) in self.revealed:
+            return
+
+        btn = self.my_buttons[r][c]
+        if (r, c) in self.flags:
+            self.flags.remove((r, c))
+            btn.config(text="")
+        else:
+            self.flags.add((r, c))
+            btn.config(text="🚩", fg="red")
+
     def handle_my_click(self, r, c):
-        # Logika kliknięcia dodać tu sprawdzanie czy jest mina
-        self.my_buttons[r][c].config(bg="white", text="0", state=tk.DISABLED)
+        if self.game_over or (r, c) in self.revealed or (r, c) in self.flags:
+            return
+
+        if (r, c) in self.mines:
+            self.lose_game(r, c)
+            return
+
+        self.reveal_cell(r, c)
+        self.check_win()
+
+    def reveal_cell(self, r, c):
+        if (r, c) in self.revealed or (r, c) in self.flags:
+            return
+
+        self.revealed.add((r, c))
+        mines_around = self.count_mines_around(r, c)
+
+        btn = self.my_buttons[r][c]
+        colors = ["", "blue", "green", "red", "purple", "maroon", "turquoise", "black", "gray"]
+        color = colors[mines_around] if mines_around > 0 else "black"
+
+        btn.config(bg="white", text=str(mines_around) if mines_around > 0 else "", disabledforeground=color, state=tk.DISABLED)
+
+        # Wysyłanie do sieci z symbolem nowej linii, aby zapobiec sklejaniu w TCP
+        if self.network:
+            self.network.send(f"UPDATE:{r},{c}\n")
+
+        # Flood Fill - autoodkrywanie
+        if mines_around == 0:
+            for dr in [-1, 0, 1]:
+                for dc in [-1, 0, 1]:
+                    if 0 <= r + dr < self.size and 0 <= c + dc < self.size:
+                        if dr != 0 or dc != 0:
+                            self.reveal_cell(r + dr, c + dc)
+
+    def check_win(self):
+        if len(self.revealed) == (self.size * self.size) - self.num_mines:
+            self.game_over = True
+
+            if self.network:
+                self.network.send("GAME_OVER:WIN\n")
+
+            messagebox.showinfo("Koniec gry", "Wygrałeś! Odkryłeś wszystkie bezpieczne pola.")
+            self.root.destroy()
+
+    def lose_game(self, r, c):
+        self.game_over = True
+        btn = self.my_buttons[r][c]
+        btn.config(bg="red", text="💣")
+
+        for (mr, mc) in self.mines:
+            if (mr, mc) != (r, c):
+                self.my_buttons[mr][mc].config(text="💣", fg="black")
 
         if self.network:
-            self.network.send(f"UPDATE:{r},{c}")
+            self.network.send("GAME_OVER:LOSE\n")
+
+        messagebox.showinfo("Koniec gry", "Przegrałeś! Kliknąłeś na minę.")
+        self.root.destroy()
 
     def receive_message(self, message):
-        if message.startswith("UPDATE:"):
-            data = message.split(":")[1]
-            r, c = map(int, data.split(","))
-            self.root.after(0, self._update_opponent_view, r, c)
+        messages = message.split('\n')
+        for msg in messages:
+            if not msg.strip():
+                continue
+
+            if msg.startswith("UPDATE:"):
+                data = msg.split(":")[1]
+                r, c = map(int, data.split(","))
+                self.root.after(0, self._update_opponent_view, r, c)
+            elif msg.startswith("GAME_OVER:"):
+                status = msg.split(":")[1]
+                self.root.after(0, self._handle_opponent_game_over, status)
 
     def _update_opponent_view(self, r, c):
         self.opponent_buttons[r][c].config(bg="gray")
+
+    def _handle_opponent_game_over(self, status):
+        self.game_over = True
+        if status == "LOSE":
+            messagebox.showinfo("Koniec gry", "Wygrałeś! Twój przeciwnik kliknął na minę.")
+        elif status == "WIN":
+            messagebox.showinfo("Koniec gry", "Przegrałeś! Twój przeciwnik odkrył całą swoją planszę.")
+
+        self.root.destroy()
