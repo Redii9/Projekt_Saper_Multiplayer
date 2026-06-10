@@ -21,6 +21,10 @@ class MinesweeperGame:
         # Blokowanie klikania
         self.is_waiting_for_player = is_host
 
+        # Flagi synchronizacji ponownej gry
+        self.wants_restart = False
+        self.opponent_wants_restart = False
+
         self.my_buttons = []
         self.opponent_buttons = []
 
@@ -33,6 +37,7 @@ class MinesweeperGame:
 
     def start_game(self):
         self.is_waiting_for_player = False
+        self.root.title("Saper Duel - GRA TRWA!")
 
     def generate_mines(self):
         while len(self.mines) < self.num_mines:
@@ -149,10 +154,24 @@ class MinesweeperGame:
         # Pytanie o zagranie ponownie
         odpowiedz = messagebox.askyesno("Koniec gry", f"{message}\n\nCzy chcesz zagrać ponownie z tym samym graczem?")
         if odpowiedz:
-            self.reset_board()
+            self.wants_restart = True
             if self.network:
                 self.network.send("RESTART\n")
+
+            self.reset_board()
+
+            if self.opponent_wants_restart:
+                self.is_waiting_for_player = False
+                self.wants_restart = False
+                self.opponent_wants_restart = False
+                self.root.title("Saper Duel - GRA TRWA!")
+            else:
+                # Blokowanie planszy
+                self.is_waiting_for_player = True
+                self.root.title("Saper Duel - Oczekiwanie na decyzję przeciwnika...")
         else:
+            if self.network:
+                self.network.send("DISCONNECT\n")
             self.return_to_menu_cb()
 
     def reset_board(self):
@@ -190,8 +209,14 @@ class MinesweeperGame:
                 status = msg.split(":")[1]
                 self.root.after(0, self._handle_opponent_game_over, status)
             elif msg == "RESTART":
-                # Ponowna gra dopiero jak obie osoby klikna tak
-                pass
+                self.opponent_wants_restart = True
+
+                # Jesli my wcisniemy tak
+                if self.wants_restart:
+                    self.is_waiting_for_player = False
+                    self.wants_restart = False
+                    self.opponent_wants_restart = False
+                    self.root.title("Saper Duel - GRA TRWA!")
 
     def _update_opponent_view(self, r, c):
         self.opponent_buttons[r][c].config(bg="gray")
