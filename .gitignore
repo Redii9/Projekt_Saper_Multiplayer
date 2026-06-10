@@ -1,0 +1,9 @@
+# Ignoruj pliki tymczasowe Pythona
+__pycache__/
+*.pyc
+
+# Ignoruj pliki tymczasowe PyInstallera
+build/
+*.spec
+
+.venv/
