@@ -9,6 +9,7 @@ MAGIC_WORD = "SAPER_DUEL_SERVER"
 class NetworkManager:
     def __init__(self, receive_callback=None):
         self.conn = None
+        self.server = None
         self.receive_callback = receive_callback
         self.is_hosting = False
 
@@ -29,12 +30,15 @@ class NetworkManager:
         threading.Thread(target=self._accept_connection, args=(server, on_connected_callback), daemon=True).start()
 
     def _accept_connection(self, server, on_connected_callback):
-        self.conn, addr = server.accept()
-        self.is_hosting = False  # Wylaczenie nadawania po dolaczeniu do gry
-        threading.Thread(target=self._listen, daemon=True).start()
+        try:
+            self.conn, addr = server.accept()
+            self.is_hosting = False  # Wylaczenie nadawania po dolaczeniu do gry
+            threading.Thread(target=self._listen, daemon=True).start()
 
-        if on_connected_callback:
-            on_connected_callback()
+            if on_connected_callback:
+                on_connected_callback()
+        except Exception:
+            pass
 
     def _broadcast_presence(self, port):
         udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -71,9 +75,27 @@ class NetworkManager:
             try:
                 data = self.conn.recv(1024).decode('utf-8')
                 if not data:
+                    if self.receive_callback:
+                        self.receive_callback("DISCONNECT")
                     break
                 if self.receive_callback:
                     self.receive_callback(data)
             except:
-                print("Połączenie zerwane.")
+                if self.receive_callback:
+                    self.receive_callback("DISCONNECT")
                 break
+
+    def close(self):
+        # Bezpieczne zamkniecie polaczen
+        self.is_hosting = False
+        if self.server:
+            try:
+                self.server.close()
+            except:
+                pass
+        if self.conn:
+            try:
+                self.conn.close()
+            except:
+                pass
+        self.conn = None
